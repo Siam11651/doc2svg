@@ -1,39 +1,70 @@
 #include <window/main_window.hpp>
+#include <filesystem>
 
-void d2t::main_window::path_changed(const QString &new_path)
+void d2s::main_window::path_changed(const QString &new_path)
 {
     m_path = new_path.toStdString();
 }
 
-void d2t::main_window::convert()
+void d2s::main_window::convert()
 {
-    m_converter_process->setArguments(
-        QStringList(
+    m_temp_dir = new QTemporaryDir();
+
+    m_temp_dir->setAutoRemove(true);
+
+    m_pandoc_process->setArguments(
         {
-            "-f",
-            "docx",
-            "-t",
-            "latex",
-            m_path.c_str()
-        })
+            m_path.c_str(),
+            "-o",
+            m_temp_dir->path() + "/temp.pdf",
+            "-V",
+            "geometry:margin=0in"
+        }
     );
 
-    m_converter_process->start();
+    m_pandoc_process->start();
 }
 
-void d2t::main_window::converted(const int32_t exit_code, const QProcess::ExitStatus &exit_status)
+void d2s::main_window::pdf_generated(const int32_t exit_code, const QProcess::ExitStatus &exit_status)
 {
-    if(exit_code == 0)
+    if(exit_code != 0)
     {
-        m_output_edit->setText(QString(m_converter_process->readAllStandardOutput()));
+        delete m_temp_dir;
+
+        m_temp_dir = nullptr;
+
+        return;
     }
-    else
-    {
-        m_error_message->showMessage(m_converter_process->readAllStandardError());
-    }
+
+    m_inkscape_process->setArguments(
+        {
+            m_temp_dir->path() + "/temp.pdf",
+            "--export-plain-svg=" + m_temp_dir->path() + "/temp.svg"
+        }
+    );
+
+    m_inkscape_process->start();
 }
 
-d2t::main_window::main_window() : QMainWindow()
+void d2s::main_window::svg_generated(const int32_t exit_code, const QProcess::ExitStatus &exit_status)
+{
+    if(exit_code != 0)
+    {
+        delete m_temp_dir;
+
+        m_temp_dir = nullptr;
+
+        return;
+    }
+
+    std::filesystem::copy((m_temp_dir->path() + "/temp.svg").toStdString(), m_output_path_edit->text().toStdString(), std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
+
+    delete m_temp_dir;
+
+    m_temp_dir = nullptr;
+}
+
+d2s::main_window::main_window() : QMainWindow()
 {
     setWindowTitle("Doc2Tex");
     setMinimumWidth(800);
@@ -52,25 +83,27 @@ d2t::main_window::main_window() : QMainWindow()
 
     m_file_layout->addWidget(m_path_edit);
     
-    m_output_edit = new QTextEdit();
+    m_svg_viewer = new QSvgWidget();
 
-    m_output_edit->setReadOnly(true);
-
-    m_root_layout->addWidget(m_output_edit, 1);
+    m_root_layout->addWidget(m_svg_viewer, 1);
 
     m_process_layout = new QHBoxLayout();
     
-    m_process_layout->addStretch();
     m_root_layout->addLayout(m_process_layout);
+
+    m_output_path_edit = new QLineEdit();
 
     m_process_button = new QPushButton();
 
     m_process_button->setText("Convert");
+    m_process_layout->addWidget(m_output_path_edit, 1);
     m_process_layout->addWidget(m_process_button);
 
-    m_converter_process = new QProcess();
+    m_pandoc_process = new QProcess();
+    m_inkscape_process = new QProcess();
 
-    m_converter_process->setProgram(PANDOC_EXE);
+    m_pandoc_process->setProgram(PANDOC_EXE);
+    m_inkscape_process->setProgram("inkscape");
 
     m_error_message = new QErrorMessage();
 
@@ -79,16 +112,19 @@ d2t::main_window::main_window() : QMainWindow()
     setCentralWidget(m_root_widget);
     connect(m_path_edit, &QLineEdit::textChanged, this, &main_window::path_changed);
     connect(m_process_button, &QPushButton::clicked, this, &main_window::convert);
-    connect(m_converter_process, &QProcess::finished, this, &main_window::converted);
+    connect(m_pandoc_process, &QProcess::finished, this, &main_window::pdf_generated);
+    connect(m_inkscape_process, &QProcess::finished, this, &main_window::svg_generated);
 }
 
-d2t::main_window::~main_window()
+d2s::main_window::~main_window()
 {
+    delete m_temp_dir;
     delete m_error_message;
-    delete m_converter_process;
+    delete m_pandoc_process;
     delete m_path_edit;
     delete m_file_layout;
-    delete m_output_edit;
+    delete m_svg_viewer;
+    delete m_output_path_edit;
     delete m_process_button;
     delete m_process_layout;
     delete m_root_layout;

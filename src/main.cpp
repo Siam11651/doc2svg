@@ -4,7 +4,7 @@
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    d2t::main_window main_window;
+    d2s::main_window main_window;
 
     main_window.show();
 
